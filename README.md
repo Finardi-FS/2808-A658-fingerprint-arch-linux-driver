@@ -161,6 +161,7 @@ Warnings:
 ## Troubleshooting
 
 **"Remote peer disconnected" when enrolling**
+
 `fprintd` is crashing at startup. Check:
 
 ```bash
@@ -170,6 +171,7 @@ journalctl -u fprintd -b --no-pager | tail -30
 If you see `undefined symbol ... LIBGUSB_0.1.0`, repeat the patch above.
 
 **Everything stopped working after an update or a reboot**
+
 The official `libfprint` has probably overwritten the patched one:
 
 ```bash
@@ -182,15 +184,18 @@ Re-copy the patched library as described in the section "After a `libfprint` upd
 
 **`fprintd-list` says no devices**
 
+
 - Check that `lsusb` shows `2808:a658`.
 - Check that the library in `/usr/lib` is the patched one (see above).
 - Run `sudo udevadm control --reload && sudo udevadm trigger`, or reboot.
 - Some laptops need the reader enabled in BIOS/UEFI.
 
 **Enrolled fingers disappeared**
+
 Fingerprints are stored in `/var/lib/fprint/`. If that directory was deleted or the device ID changed, enroll again.
 
 **Go back to the official library**
+
 
 ```bash
 sudo cp -a /usr/lib/libfprint-2.so.2.0.0.official /usr/lib/libfprint-2.so.2.0.0
