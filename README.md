@@ -5,7 +5,8 @@ Get the FocalTech / Realtek fingerprint reader (`2808:a658`, "Realtek USB2.0 Fin
 > **Fork notice:** this is a fork of
 > [Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver).
 > The original instructions no longer work on an up-to-date Arch (libgusb 0.4.x). This fork documents the cause and adds a fix.
-
+>
+> Ubuntu/Debian script inherited from the original repo, untested in this fork.
 ---
 
 ## The problem with the original instructions
