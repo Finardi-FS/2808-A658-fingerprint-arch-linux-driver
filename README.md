@@ -1,203 +1,218 @@
-<div align="center">
+# FocalTech 2808:a658 Fingerprint Driver for Arch Linux
 
-# FocalTech Fingerprint Driver
+Get the FocalTech / Realtek fingerprint reader (`2808:a658`, "Realtek USB2.0 Finger Print Bridge FocalTech Fingerprint Device", e.g. ASUS Vivobook Pro 15) working on **current Arch Linux**.
 
-### Make FocalTech fingerprint readers work on Arch Linux & Ubuntu
-
-[![Platform](https://img.shields.io/badge/Platform-Arch%20Linux%20%7C%20Ubuntu-1793D1?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver)
-[![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver)
-[![Stars](https://img.shields.io/github/stars/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver?style=for-the-badge&color=yellow)](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver/stargazers)
-
-</div>
+> **Fork notice:** this is a fork of
+> [Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver).
+> The original instructions no longer work on an up-to-date Arch (libgusb 0.4.x). This fork documents the cause and adds a fix.
 
 ---
 
-## 📖 Overview
+## The problem with the original instructions
 
-FocalTech fingerprint sensors (USB ID `2808:A658`) — commonly found in **Asus laptops** and similar hardware — ship with drivers structured for Debian/Ubuntu environments. This means they don't work out-of-the-box on Arch Linux.
+The driver is a **proprietary, precompiled `libfprint`** (originally from the `ftfpteams` Debian/RPM package). It was linked against an old `libgusb` and requests symbols with the version tag `LIBGUSB_0.1.0`.
 
-This repository provides:
+Current Arch ships `libgusb` 0.4.x, which exports the same functions under `LIBGUSB_0.2.8`. As a result `fprintd` exits immediately after start, and the GUI shows **"Remote peer disconnected"** when you try to enroll a finger:
 
-- A **custom pre-compiled `libfprint` package** for Arch Linux
-- A **one-script installer** for Ubuntu/Debian (22.04 and 24.04)
-- Step-by-step instructions to enable **fingerprint login and sudo authentication**
-
----
-
-## 🖥 Compatible Hardware
-
-| Device | USB ID | Status |
-|--------|--------|--------|
-| Asus laptops (FocalTech sensor) | `2808:A658` | ✅ Confirmed working |
-| Similar FocalTech readers | `2808:xxxx` | ⚠️ May work — test with `lsusb` |
-
-> **Not sure if your device is compatible?** Run `lsusb` and look for a `FocalTech` or `2808` entry in the output.
-
----
-
-## ⚡ Quick Start
-
-Choose your OS below:
-
-- [Arch Linux installation](#-arch-linux-installation)
-- [Ubuntu / Debian installation](#-ubuntu--debian-installation)
-
----
-
-## 🔵 Arch Linux Installation
-
-### Step 1 — Verify your hardware
-
-Open a terminal and run:
-
-```bash
-lsusb
+```
+fprintd: symbol lookup error: /usr/lib/libfprint-2.so.2:
+undefined symbol: g_usb_device_get_interfaces, version LIBGUSB_0.1.0
+fprintd.service: Main process exited, code=exited, status=127/n/a
 ```
 
-Look for a line containing `FocalTech` or `ID 2808:a658`. If it's not there, your device either isn't connected or isn't supported.
+Affected symbols:
 
-### Step 2 — Clone the repository
+- `g_usb_device_get_interfaces`
+- `g_usb_device_get_release`
+- `g_usb_interface_get_class`
+- `g_usb_interface_get_subclass`
+- `g_usb_interface_get_protocol`
+- `g_usb_interface_get_number`
+
+**Fix:** remove the version requirement on these symbols with `patchelf --clear-symbol-version`, so the dynamic linker resolves them against the installed `libgusb`.
+
+Tested on: Arch Linux, ASUS Vivobook Pro 15, `libgusb 0.4.9`, `libfprint 1.94.100`, `patchelf 0.19.2`.
+
+---
+
+## Compatible hardware
+
+| Device                       | USB ID      | Status                                   |
+| ---------------------------- | ----------- | ---------------------------------------- |
+| ASUS laptops (FocalTech/RTS) | `2808:a658` | Working with the patch below             |
+| Other FocalTech readers      | `2808:xxxx` | Unknown. Different drivers are needed    |
+
+Check your device:
 
 ```bash
-git clone https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver.git
+lsusb | grep -i -E "2808|focaltech"
+```
+
+---
+
+## Installation (Arch Linux)
+
+### 1. Install dependencies and clone
+
+```bash
+sudo pacman -S --needed fprintd patchelf git
+git clone https://github.com/Finardi-FS/2808-A658-fingerprint-arch-linux-driver.git
 cd 2808-A658-fingerprint-arch-linux-driver
 ```
 
-### Step 3 — Install the fingerprint daemon
+### 2. Extract the driver and patch it
 
 ```bash
-sudo pacman -S fprintd
+rm -rf /tmp/fp && mkdir -p /tmp/fp
+tar -xf libfprint.pkg.tar.zst -C /tmp/fp
+
+F=/tmp/fp/usr/lib/x86_64-linux-gnu/libfprint-2.so.2.0.0
+
+for s in g_usb_device_get_interfaces g_usb_device_get_release \
+         g_usb_interface_get_class g_usb_interface_get_subclass \
+         g_usb_interface_get_protocol g_usb_interface_get_number; do
+  patchelf --clear-symbol-version "$s" "$F"
+done
+
+# Must print nothing:
+ldd -r "$F" 2>&1 | grep -i -E "undefined|not found"
 ```
 
-### Step 4 — Install the custom libfprint package
+If the last command prints other missing symbols or libraries, the driver has additional incompatibilities. Open an issue with the output.
+
+### 3. Keep a copy of the patched library
+
+`/tmp` is wiped on reboot, so store the patched file somewhere permanent:
 
 ```bash
-sudo pacman -U -dd --overwrite '*' libfprint.pkg.tar.zst
+sudo install -Dm755 "$F" /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0
 ```
 
-> ⚠️ The `-dd` flag skips dependency checks. This is intentional — the custom package is structured for Debian but works on Arch with the path fix below.
+### 4. Replace the system library
 
-### Step 5 — Fix the library path
-
-```bash
-sudo cp -a /usr/lib/x86_64-linux-gnu/libfprint-2* /usr/lib/
-```
-
-### Step 6 — Restart the fingerprint daemon
+Back up the official one first:
 
 ```bash
+sudo cp -a /usr/lib/libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2.0.0.official
+sudo cp /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2.0.0
 sudo systemctl restart fprintd
 ```
 
-### Step 7 — Enroll your fingerprint
+### 5. Verify and enroll
 
-Go to **Settings → System → Users → Fingerprint Login** and enroll your finger.
+```bash
+fprintd-list "$USER"     # should list "FocalTech Systems Co., Ltd fingerprint"
+fprintd-enroll           # touch the sensor repeatedly until enroll-completed
+fprintd-verify
+```
+
+Then you can also enroll from your desktop settings (GNOME: Settings -> System -> Users -> Fingerprint Login).
+
+> **Do not** use the old step `pacman -U -dd --overwrite '*' libfprint.pkg.tar.zst`. It replaces the system `libfprint` with a package built for Debian and conflicts with the Arch package.
 
 ---
 
-## 🟠 Ubuntu / Debian Installation
+## After a `libfprint` update: re-apply the patch
 
-An automated install script is included for **Ubuntu 22.04 and 24.04**. It extracts the driver files from the pre-compiled Arch package and places them in the correct directories for Debian-based systems automatically.
+Whenever `pacman` updates `libfprint`, the official library (without the FocalTech driver) overwrites the patched one and the reader stops working (`fprintd-list` finds no device, or the fingerprint option disappears from the settings).
+
+You do **not** need to patch anything again: the patched driver library is the one saved in step 3. Just put it back:
 
 ```bash
-git clone https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver.git
-cd 2808-A658-fingerprint-arch-linux-driver
-chmod +x install-ubuntu.sh
-sudo ./install-ubuntu.sh
+sudo cp /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2.0.0
+sudo systemctl restart fprintd
+fprintd-list "$USER"
 ```
 
-After the script completes, go to **Settings → Users → Fingerprint Login** to enroll.
+Check that the right library is in place:
+
+```bash
+nm -D /usr/lib/libfprint-2.so.2.0.0 | grep get_interfaces
+# must NOT show "@LIBGUSB_0.1.0"
+```
+
+Your enrolled fingerprints are kept in `/var/lib/fprint/` and are not affected, so you do not need to enroll again.
+
+If the saved copy is lost, repeat steps 2 and 3 to extract and patch the driver again from `libfprint.pkg.tar.zst`.
+
+Things to know:
+
+- The old driver may stop working after future updates of `fprintd`, `libgusb`, `glib` or `openssl`. If restoring the library is not enough, check `journalctl -u fprintd -b --no-pager | tail -30` and open an issue.
+- Optional: if you prefer to avoid doing this after every update, you can add `IgnorePkg = libfprint` to the `[options]` section of `/etc/pacman.conf`. The downside is that `libfprint` will no longer receive updates, including security fixes.
 
 ---
 
-## 🔐 Enable Fingerprint for `sudo`
+## Optional: fingerprint for `sudo`
 
-Once fingerprint login works in Settings, you can also use it to authenticate `sudo` commands in the terminal.
-
-**1. Open the sudo PAM config:**
-
-```bash
-sudo nano /etc/pam.d/sudo
-```
-
-**2. Add this line at the very top of the file** (above all existing lines):
+Add this line at the **top** of `/etc/pam.d/sudo`:
 
 ```
 auth    sufficient    pam_fprintd.so
 ```
 
-**3. Save and exit** (`Ctrl+O`, `Enter`, `Ctrl+X`).
+Warnings:
 
-> ✅ Now running `sudo` will prompt for your fingerprint first. If it fails or times out, it falls back to your password automatically.
-
----
-
-## 🛠 Troubleshooting
-
-<details>
-<summary><strong>Fingerprint option doesn't appear in Settings</strong></summary>
-
-Make sure `fprintd` is running:
-
-```bash
-systemctl status fprintd
-```
-
-If it's inactive, start it:
-
-```bash
-sudo systemctl enable --now fprintd
-```
-
-</details>
-
-<details>
-<summary><strong>`lsusb` doesn't show my fingerprint reader</strong></summary>
-
-Try unplugging and replugging the device (if external). For built-in sensors, check your BIOS/UEFI — some laptops require fingerprint readers to be explicitly enabled in BIOS settings.
-
-</details>
-
-<details>
-<summary><strong>Library path error after install</strong></summary>
-
-Run the copy command again and verify:
-
-```bash
-sudo cp -a /usr/lib/x86_64-linux-gnu/libfprint-2* /usr/lib/
-ls /usr/lib/libfprint*
-```
-
-You should see `libfprint-2.so` in the output.
-
-</details>
-
-<details>
-<summary><strong>sudo fingerprint prompt immediately fails</strong></summary>
-
-Try enrolling a different finger in Settings first. Also ensure the PAM line is at the very top of `/etc/pam.d/sudo` — order matters.
-
-</details>
+- `sufficient` means the fingerprint alone authenticates `sudo`. Per the Arch Wiki, this allows a background process to trigger `sudo` while you touch the sensor for another reason.
+- Before editing PAM files, keep a root shell open (`sudo -s`) and test in a second terminal, so a mistake does not lock you out.
+- Safer alternative: `pam-fprint-grosshack` (AUR), which accepts the password and the fingerprint at the same prompt. Review the PKGBUILD before installing.
 
 ---
 
-## 🤝 Contributing
+## Troubleshooting
 
-Found a new compatible device? Got it working on a different distro? Contributions are welcome.
+**"Remote peer disconnected" when enrolling**
+`fprintd` is crashing at startup. Check:
 
-1. Fork the repo
-2. Create a branch: `git checkout -b fix/your-fix-name`
-3. Commit your changes: `git commit -m "Add support for XYZ"`
-4. Open a Pull Request
+```bash
+journalctl -u fprintd -b --no-pager | tail -30
+```
 
-Please include your hardware info (`lsusb` output) and OS version in the PR description.
+If you see `undefined symbol ... LIBGUSB_0.1.0`, repeat the patch above.
+
+**Everything stopped working after an update or a reboot**
+The official `libfprint` has probably overwritten the patched one:
+
+```bash
+pacman -Qo /usr/lib/libfprint-2.so.2
+nm -D /usr/lib/libfprint-2.so.2.0.0 | grep get_interfaces
+grep -i libfprint /var/log/pacman.log | tail
+```
+
+Re-copy the patched library as described in the section "After a `libfprint` update".
+
+**`fprintd-list` says no devices**
+
+- Check that `lsusb` shows `2808:a658`.
+- Check that the library in `/usr/lib` is the patched one (see above).
+- Run `sudo udevadm control --reload && sudo udevadm trigger`, or reboot.
+- Some laptops need the reader enabled in BIOS/UEFI.
+
+**Enrolled fingers disappeared**
+Fingerprints are stored in `/var/lib/fprint/`. If that directory was deleted or the device ID changed, enroll again.
+
+**Go back to the official library**
+
+```bash
+sudo cp -a /usr/lib/libfprint-2.so.2.0.0.official /usr/lib/libfprint-2.so.2.0.0
+# or:
+sudo pacman -S --overwrite '*' libfprint
+sudo systemctl restart fprintd
+```
 
 ---
 
-<div align="center">
+## Notes and limitations
 
-Made with frustration and caffeine on Fedora Linux 🐧
+- The driver is **proprietary and closed source** (from `ftfpteams`). This repository only redistributes the original binary package. The patch is applied locally on your machine and the modified binary is not redistributed. Check the original license terms before sharing modified binaries.
+- Because the binary is old, other future changes in `glib`, `libusb`, `openssl`, or `fprintd` may break it again.
+- Upstream `libfprint` has no official driver for this reader.
 
-If this helped you, consider leaving a ⭐ — it helps others find it!
+## Credits
 
-</div>
+- Original repository: [Meetsuthar32778](https://github.com/Meetsuthar32778/2808-A658-fingerprint-arch-linux-driver)
+- Driver: `ftfpteams` (FocalTech / Realtek RTS5811 FT9366)
+- Libgusb symbol fix: documented in this fork
+
+## Contributing
+
+Tested on another model or distro? Open an issue or pull request with your `lsusb` output, `pacman -Q libgusb libfprint fprintd`, and what worked.
