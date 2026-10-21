@@ -57,7 +57,7 @@ lsusb | grep -i -E "2808|focaltech"
 
 ```bash
 sudo pacman -S --needed fprintd patchelf git
-git clone https://github.com/Finardi-FS/2808-A658-fingerprint-arch-linux-driver.git
+git clone https://github.com/<your-user>/2808-A658-fingerprint-arch-linux-driver.git
 cd 2808-A658-fingerprint-arch-linux-driver
 ```
 
@@ -91,13 +91,15 @@ sudo install -Dm755 "$F" /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0
 
 ### 4. Replace the system library
 
-Back up the official one first:
+Back up the official one first, **outside of `/usr/lib`**:
 
 ```bash
-sudo cp -a /usr/lib/libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2.0.0.official
+sudo cp -a /usr/lib/libfprint-2.so.2.0.0 /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0.official
 sudo cp /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2.0.0
 sudo systemctl restart fprintd
 ```
+
+> **Important:** never leave a backup such as `libfprint-2.so.2.0.0.official` inside `/usr/lib`. `ldconfig` sorts library file names and would re-point the `libfprint-2.so.2` symlink to the backup (`libfprint-2.so.2.0.0.official` sorts after `libfprint-2.so.2.0.0`), so `fprintd` silently loads the official library and reports "No devices available".
 
 ### 5. Verify and enroll
 
@@ -183,8 +185,24 @@ grep -i libfprint /var/log/pacman.log | tail
 
 Re-copy the patched library as described in the section "After a `libfprint` update".
 
-**`fprintd-list` says no devices**
+**`fprintd-list` says "No devices available" although `lsusb` shows `2808:a658`**
 
+Check where the `libfprint-2.so.2` symlink points:
+
+```bash
+ls -l /usr/lib/libfprint-2.so*
+```
+
+It must point to `libfprint-2.so.2.0.0`. If it points to something else (for example a `.official` backup), move the backup out of `/usr/lib` and fix the link:
+
+```bash
+sudo mv /usr/lib/libfprint-2.so.2.0.0.official /usr/local/share/focaltech-a658/
+sudo ln -sf libfprint-2.so.2.0.0 /usr/lib/libfprint-2.so.2
+sudo ldconfig
+sudo systemctl restart fprintd
+```
+
+**`fprintd-list` says no devices**
 
 - Check that `lsusb` shows `2808:a658`.
 - Check that the library in `/usr/lib` is the patched one (see above).
@@ -197,9 +215,8 @@ Fingerprints are stored in `/var/lib/fprint/`. If that directory was deleted or 
 
 **Go back to the official library**
 
-
 ```bash
-sudo cp -a /usr/lib/libfprint-2.so.2.0.0.official /usr/lib/libfprint-2.so.2.0.0
+sudo cp -a /usr/local/share/focaltech-a658/libfprint-2.so.2.0.0.official /usr/lib/libfprint-2.so.2.0.0
 # or:
 sudo pacman -S --overwrite '*' libfprint
 sudo systemctl restart fprintd
